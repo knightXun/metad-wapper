@@ -1,0 +1,7 @@
+domain: github.com/vesoft-inc-private
+repo: github.com/vesoft-inc-private/nebula-operator
+resources:
+- group: nebula
+  kind: Application
+  version: v1alpha1
+version: "2"

@@ -1,0 +1,89 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metad-wapper
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metad-wapper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metad-wapper
+  template:
+    metadata:
+      labels:
+        app: metad-wapper
+    spec:
+      serviceAccountName: metad-wapper
+      containers:
+      - name: metad-wapper
+        image: knightxun/metad-wapper:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8880
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metad-wapper
+  labels:
+    app: metad-wapper
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8880
+    targetPort: 8880
+  selector:
+    app: metad-wapper
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: metad-wapper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: metad-wapper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metad-wapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: metad-wapper
+subjects:
+  - kind: ServiceAccount
+    name: metad-wapper
+    namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: metad-wapper
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: metad-wapper
+subjects:
+  - kind: ServiceAccount
+    name: metad-wapper
+    namespace: default
