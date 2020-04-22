@@ -47,6 +47,8 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 
 	timeoutOption := thrift.SocketTimeout(time.Second*5)
 	addressOption := thrift.SocketAddr(metadSvcIp + ":44500")
+
+	fmt.Println("MetaThrift Addr: " + metadSvcIp + ":44500")
 	transport, err := thrift.NewSocket(timeoutOption, addressOption)
 	protocol := thrift.NewBinaryProtocolFactoryDefault()
 	if err != nil {
@@ -55,12 +57,20 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 
 	metadClient := nebula_metad.NewMetaServiceClientFactory(transport, protocol)
 
+	err = metadClient.Transport.Open()
+
+	if err != nil {
+		fmt.Println("MetaThrift Cant Open " + err.Error())
+		return nil, err
+	}
+
 	return metadClient, nil
 }
 
 func main() {
 	http.HandleFunc("/list/spaces",ListSpaceHandler)
-	http.HandleFunc("/create/users",CreateSpaceHandler)
+	http.HandleFunc("/create/spaces",CreateSpaceHandler)
+	http.HandleFunc("/create/users",CreateUserHandler)
 	http.HandleFunc("/delete/users",DeleteUsersHandler)
 	http.HandleFunc("/list/spaces/users",ListSpaceUsersHandler)
 
@@ -79,6 +89,14 @@ type CreateSpaceRequest struct {
 	InstanceID string
 	SpaceName string
 }
+
+type CreateUserRequest struct {
+	InstanceID string
+	UserName string
+	Role string
+	SpaceName string
+}
+
 
 type SpaceResponse struct {
 	InstanceID string
@@ -116,6 +134,12 @@ func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	json.Unmarshal(bodyData, &spaceRequest)
 
 	metadClient, err := makeMetadClient(spaceRequest.InstanceID)
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
 
 	if err != nil {
 		fmt.Println("Create MetadClient for %v error: %v", spaceRequest.InstanceID, err)
@@ -179,6 +203,12 @@ func CreateSpaceHandler(w http.ResponseWriter,r *http.Request) {
 		return
 	}
 
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
+
 	createSpaceReq := nebula_metad.NewCreateSpaceReq()
 
 	createSpaceReq.IfNotExists = true
@@ -203,6 +233,96 @@ func CreateSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	return
 }
 
+func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
+
+	createUserRequest := CreateUserRequest{}
+
+	bodyData, err := ioutil.ReadAll(r.Body)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	json.Unmarshal(bodyData, &createUserRequest)
+
+	metadClient, err := makeMetadClient(createUserRequest.InstanceID)
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
+
+	createUserReq := nebula_metad.NewCreateUserReq()
+
+	createUserReq.IfNotExists = true
+	createUserReq.Account = createUserRequest.UserName
+
+	createUserResp, err := metadClient.CreateUser(createUserReq)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if createUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+
+
+	grantRoleReq := nebula_metad.NewGrantRoleReq()
+	grantRoleReq.RoleItem = nebula.NewRoleItem()
+
+	roleType := nebula.RoleType_GUEST
+	switch createUserRequest.Role {
+	case "GOD":
+		roleType = nebula.RoleType_GOD
+	case "ADMIN":
+		roleType = nebula.RoleType_ADMIN
+	case "DBA":
+		roleType = nebula.RoleType_DBA
+	case "USER":
+		roleType = nebula.RoleType_USER
+	case "GUEST":
+		roleType = nebula.RoleType_GUEST
+	}
+
+	getSpaceReq := nebula_metad.NewGetSpaceReq()
+	getSpaceReq.SpaceName = createUserRequest.SpaceName
+	getSpaceResp, err := metadClient.GetSpace(getSpaceReq)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	spaceID := getSpaceResp.Item.SpaceID
+
+	grantRoleReq.RoleItem.RoleType = roleType
+	grantRoleReq.RoleItem.User = createUserRequest.UserName
+	grantRoleReq.RoleItem.SpaceID = spaceID
+
+	grantRoleResp, err := metadClient.GrantRole(grantRoleReq)
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if grantRoleResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return
+}
 func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
 	deleteUserRequest := DeleteUserRequest{}
 
@@ -220,6 +340,12 @@ func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
 
 	dropUserReq := nebula_metad.NewDropUserReq()
 
@@ -258,6 +384,12 @@ func ListSpaceUsersHandler(w http.ResponseWriter,r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
 
 	listUserReq := nebula_metad.NewListUsersReq()
 
