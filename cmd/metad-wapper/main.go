@@ -1,19 +1,19 @@
 package main
 
 import (
-	"github.com/vesoft-inc-private/nebula-operator/pkg/errorcode"
-	"net/http"
-	"log"
-	"fmt"
-	"time"
 	"encoding/json"
-	"io/ioutil"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"fmt"
 	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
+	"github.com/vesoft-inc-private/nebula-operator/pkg/errorcode"
 	nebula "github.com/vesoft-inc/nebula-go/nebula"
 	nebula_metad "github.com/vesoft-inc/nebula-go/nebula/meta"
+	"io/ioutil"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"log"
+	"net/http"
+	"time"
 )
 
 var client *kubernetes.Clientset
@@ -46,7 +46,7 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 
 	metadSvcIp := metadSvc.Spec.ClusterIP
 
-	timeoutOption := thrift.SocketTimeout(time.Second*5)
+	timeoutOption := thrift.SocketTimeout(time.Second * 5)
 	addressOption := thrift.SocketAddr(metadSvcIp + ":44500")
 
 	fmt.Println("MetaThrift Addr: " + metadSvcIp + ":44500")
@@ -69,14 +69,15 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 }
 
 func main() {
-	http.HandleFunc("/list/spaces",ListSpaceHandler)
-	http.HandleFunc("/create/spaces",CreateSpaceHandler)
-	http.HandleFunc("/create/users",CreateUserHandler)
-	http.HandleFunc("/delete/users",DeleteUsersHandler)
+	http.HandleFunc("/list/spaces", ListSpaceHandler)
+	http.HandleFunc("/create/spaces", CreateSpaceHandler)
+	http.HandleFunc("/create/users", CreateUserHandler)
+	http.HandleFunc("/delete/users", revokeUsersHandler)
 	http.HandleFunc("/initialize", InitializeHandler)
-	http.HandleFunc("/list/spaces/users",ListSpaceUsersHandler)
+	http.HandleFunc("/list/spaces/users", ListSpaceUsersHandler)
+	http.HandleFunc("/list/rootspaces/users", ListRootSpaceUsersHandler)
 
-	err := http.ListenAndServe("0.0.0.0:8880",nil)
+	err := http.ListenAndServe("0.0.0.0:8880", nil)
 
 	if err != nil {
 		fmt.Println("")
@@ -89,20 +90,20 @@ type ListSpaceRequest struct {
 
 type ListSpaceResponse struct {
 	InstanceID string
-	Spaces []string
-	Code   int
+	Spaces     []string
+	Code       int
 }
 
 type CreateSpaceRequest struct {
 	InstanceID string
-	SpaceName string
+	SpaceName  string
 }
 
 type CreateUserRequest struct {
 	InstanceID string
-	UserName string
-	Role string
-	SpaceName string
+	UserName   string
+	Role       string
+	SpaceName  string
 }
 
 type CreateUserResponse struct {
@@ -116,25 +117,27 @@ type ListUserRequest struct {
 
 type ListUserResponse struct {
 	UserRoles map[string]string
-	Code   int
+	Code      int
 }
 
-type DeleteUserRequest struct {
+type RevokeUserRequest struct {
 	InstanceID string
 	UserName   string
-	SpaceName  string
+	Space  	string
+	Role       string
 }
 
-type DeleteUserResponse struct {
-	Code   int
+type RevokeUserResponse struct {
+	Code int
 }
 
-func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
+func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("List Spaces")
 
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	listSpaceRequest := ListSpaceRequest{}
@@ -162,7 +165,7 @@ func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	}()
 
 	if err != nil {
-		fmt.Println("Create MetadClient for %v error: %v", listSpaceRequest.InstanceID, err)
+		fmt.Println("Create MetadClient for error", listSpaceRequest.InstanceID, err)
 		listSpaceResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(listSpaceResponse)
 		w.Write(body)
@@ -173,7 +176,7 @@ func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	listSpacesResp, err := metadClient.ListSpaces(&nebula_metad.ListSpacesReq{})
 
 	if err != nil {
-		fmt.Println("List Spaces for %v error: %v", listSpaceRequest.InstanceID, err)
+		fmt.Println("List Spaces for error: ", listSpaceRequest.InstanceID, err)
 		listSpaceResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(listSpaceResponse)
 		w.Write(body)
@@ -182,7 +185,7 @@ func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	}
 
 	if listSpacesResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
-		fmt.Println("List Spaces for %v error code: %v", listSpaceRequest.InstanceID, listSpacesResp.Code)
+		fmt.Println("List Spaces for error code: ", listSpaceRequest.InstanceID, listSpacesResp.Code)
 		listSpaceResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(listSpaceResponse)
 		w.Write(body)
@@ -217,11 +220,14 @@ func ListSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func CreateSpaceHandler(w http.ResponseWriter,r *http.Request) {
+func CreateSpaceHandler(w http.ResponseWriter, r *http.Request) {
 
+	fmt.Println("Begin Create Space")
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	fmt.Println("Authorization is " + authorization)
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	createSpaceRequest := CreateSpaceRequest{}
@@ -249,7 +255,6 @@ func CreateSpaceHandler(w http.ResponseWriter,r *http.Request) {
 
 	createSpaceReq := nebula_metad.NewCreateSpaceReq()
 
-	createSpaceReq.IfNotExists = true
 	createSpaceReq.Properties = nebula_metad.NewSpaceProperties()
 	createSpaceReq.Properties.SpaceName = createSpaceRequest.SpaceName
 	createSpaceReq.Properties.PartitionNum = 3
@@ -258,24 +263,28 @@ func CreateSpaceHandler(w http.ResponseWriter,r *http.Request) {
 	createSpaceResp, err := metadClient.CreateSpace(createSpaceReq)
 
 	if err != nil {
+		fmt.Println(	"create space " + createSpaceRequest.SpaceName + " error: " + err.Error())
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
 	if createSpaceResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("create space failed, ErrorCode is ", createSpaceResp.Code )
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
+	fmt.Println("Create Space Done")
 	w.WriteHeader(http.StatusOK)
 	return
 }
 
-func InitializeHandler(w http.ResponseWriter,r *http.Request) {
+func InitializeHandler(w http.ResponseWriter, r *http.Request) {
 
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	createUserRequest := CreateUserRequest{}
@@ -285,8 +294,8 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 	if err != nil {
 		createUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
@@ -297,8 +306,8 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 		fmt.Println("Create MetadClient Error!")
 		createUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
@@ -320,9 +329,8 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 		fmt.Println("MetadClient Create User Failed !", err.Error())
 		createUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
-
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
@@ -332,18 +340,16 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 		fmt.Println("Create User Failed")
 		createUserResponse.Code = errorcode.ErrUserExisted
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
-
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
 	if createUserResp.Code == nebula_metad.ErrorCode_E_EXISTED {
 		createUserResponse.Code = 0
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
-
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
@@ -352,21 +358,7 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 	grantRoleReq := nebula_metad.NewGrantRoleReq()
 	grantRoleReq.RoleItem = nebula.NewRoleItem()
 
-	roleType := nebula.RoleType_GUEST
-	switch createUserRequest.Role {
-	case "GOD":
-		roleType = nebula.RoleType_GOD
-	case "ADMIN":
-		roleType = nebula.RoleType_ADMIN
-	case "DBA":
-		roleType = nebula.RoleType_DBA
-	case "USER":
-		roleType = nebula.RoleType_USER
-	case "GUEST":
-		roleType = nebula.RoleType_GUEST
-	}
-
-	grantRoleReq.RoleItem.RoleType = roleType
+	grantRoleReq.RoleItem.RoleType = nebula.RoleType_GOD
 	grantRoleReq.RoleItem.User = createUserRequest.UserName
 	grantRoleReq.RoleItem.SpaceID = 0
 
@@ -376,9 +368,8 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 		fmt.Println("Grant Roles Failed: " + err.Error())
 		createUserResponse.Code = errorcode.ErrInitialUserFailed
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
-
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
@@ -386,23 +377,24 @@ func InitializeHandler(w http.ResponseWriter,r *http.Request) {
 		fmt.Println("Grant Roles ErrorCode is : ", grantRoleResp.Code)
 		createUserResponse.Code = errorcode.ErrInitialUserFailed
 		body, _ := json.Marshal(createUserResponse)
-		w.Write(body)
 		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
 		return
 	}
 
 	createUserResponse.Code = 0
 	body, _ := json.Marshal(createUserResponse)
-	w.Write(body)
 	w.WriteHeader(http.StatusOK)
+	w.Write(body)
+	fmt.Println("Create GOD User" + createUserRequest.UserName + " Success!")
 	return
 }
 
-
-func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
+func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	createUserRequest := CreateUserRequest{}
@@ -457,14 +449,9 @@ func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
 
 	if createUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
 		if createUserResp.Code == nebula_metad.ErrorCode_E_EXISTED {
-			fmt.Println("Create User Failed ", err.Error())
-			createUserResponse.Code = errorcode.ErrUserExisted
-			body, _ := json.Marshal(createUserResponse)
-			w.Write(body)
-			w.WriteHeader(http.StatusForbidden)
-			return
+
 		} else {
-			createUserResponse.Code = errorcode.ErrUserExisted
+			createUserResponse.Code = errorcode.ErrInternalError
 			body, _ := json.Marshal(createUserResponse)
 			w.Write(body)
 			fmt.Println("Create User Failed")
@@ -492,6 +479,7 @@ func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
 
 	getSpaceReq := nebula_metad.NewGetSpaceReq()
 	getSpaceReq.SpaceName = createUserRequest.SpaceName
+	fmt.Println("Get Space, Name is :  " + createUserRequest.SpaceName)
 	getSpaceResp, err := metadClient.GetSpace(getSpaceReq)
 
 	if err != nil {
@@ -509,14 +497,16 @@ func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
 			createUserResponse.Code = errorcode.ErrSpaceNotFound
 			body, _ := json.Marshal(createUserResponse)
 			w.Write(body)
-			fmt.Println("Get Space Failed ", err.Error())
+			fmt.Println("Get Space Failed ", getSpaceResp.Code)
 			w.WriteHeader(http.StatusForbidden)
+			return
 		} else {
 			createUserResponse.Code = errorcode.ErrInternalError
 			body, _ := json.Marshal(createUserResponse)
 			w.Write(body)
-			fmt.Println("Get Space Error ", err.Error())
+			fmt.Println("Get Space Error ", getSpaceResp.Code)
 			w.WriteHeader(http.StatusForbidden)
+			return
 		}
 	}
 
@@ -541,7 +531,7 @@ func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
 		createUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(createUserResponse)
 		w.Write(body)
-		fmt.Println("Grant User Error ", err.Error())
+		fmt.Println("Grant User Error ", getSpaceResp.Code)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -553,15 +543,15 @@ func CreateUserHandler(w http.ResponseWriter,r *http.Request) {
 	return
 }
 
-
-func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
+func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
-	deleteUserRequest := DeleteUserRequest{}
-	deleteUserResponse := DeleteUserResponse{}
+	deleteUserRequest := RevokeUserRequest{}
+	deleteUserResponse := RevokeUserResponse{}
 
 	bodyData, err := ioutil.ReadAll(r.Body)
 
@@ -594,15 +584,45 @@ func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
 		}
 	}()
 
-	dropUserReq := nebula_metad.NewDropUserReq()
 
-	dropUserReq.Account = deleteUserRequest.UserName
+	spaceID, err := getSpaceID(deleteUserRequest.Space, metadClient)
 
-	dropUserResp, err := metadClient.DropUser(dropUserReq)
+	if err != nil {
+		fmt.Println("Get SpaceID Failed ", err.Error())
+		deleteUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(deleteUserResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+
+	roleType := nebula.RoleType_GUEST
+	switch deleteUserRequest.Role {
+	case "GOD":
+		roleType = nebula.RoleType_GOD
+	case "ADMIN":
+		roleType = nebula.RoleType_ADMIN
+	case "DBA":
+		roleType = nebula.RoleType_DBA
+	case "USER":
+		roleType = nebula.RoleType_USER
+	case "GUEST":
+		roleType = nebula.RoleType_GUEST
+	}
+
+
+	dropUserReq := nebula_metad.NewRevokeRoleReq()
+	dropUserReq.RoleItem = new(nebula.RoleItem)
+	dropUserReq.RoleItem.User = deleteUserRequest.UserName
+	dropUserReq.RoleItem.SpaceID = spaceID
+	dropUserReq.RoleItem.RoleType = roleType
+
+	revokeRoleResp, err := metadClient.RevokeRole(dropUserReq)
 
 	if err != nil {
 
-		fmt.Println("Drop User Failed ", err.Error())
+		fmt.Println("Revoke User Failed ", err.Error())
 		deleteUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(deleteUserResponse)
 		w.Write(body)
@@ -611,8 +631,8 @@ func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
 		return
 	}
 
-	if dropUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
-		fmt.Println("Drop User Failed ")
+	if revokeRoleResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("Revoke User Failed ")
 		deleteUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(deleteUserResponse)
 		w.Write(body)
@@ -625,16 +645,16 @@ func DeleteUsersHandler(w http.ResponseWriter,r *http.Request) {
 	body, _ := json.Marshal(deleteUserResponse)
 	w.Write(body)
 
-
 	w.WriteHeader(http.StatusOK)
 	return
 }
 
-func ListSpaceUsersHandler(w http.ResponseWriter,r *http.Request) {
+func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	authorization := r.Header.Get("Authorization")
-	if authorization == "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	listUserRequest := ListUserRequest{}
@@ -699,6 +719,15 @@ func ListSpaceUsersHandler(w http.ResponseWriter,r *http.Request) {
 		return
 	}
 
+	if getSpaceResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("Get Space Failed, ErrorCode is ", getSpaceResp.Code )
+		listUserResponse.Code = errorcode.ErrNotFound
+		body, _ := json.Marshal(listUserResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	spaceID := getSpaceResp.Item.SpaceID
 	fmt.Println("SpaceID is ", getSpaceResp.Item.SpaceID)
 
@@ -707,15 +736,21 @@ func ListSpaceUsersHandler(w http.ResponseWriter,r *http.Request) {
 	for user, userid := range listUserResp.Users {
 		fmt.Println("Get Roles of ", userid, user)
 
+		if user == "root" {
+			continue
+		}
+
 		getUserRolesReq := nebula_metad.NewGetUserRolesReq()
 		getUserRolesReq.Account = user
 
 		roleResp, err := metadClient.GetUserRoles(getUserRolesReq)
-		if err != nil || roleResp.Code != nebula_metad.ErrorCode_SUCCEEDED{
+		if err != nil  {
+			fmt.Println("Get User " + user + " error " + err.Error() )
 			continue
 		}
 
 		for _, role := range roleResp.Roles {
+
 			if role.SpaceID == spaceID {
 				switch role.RoleType {
 				case nebula.RoleType_GOD:
@@ -737,5 +772,123 @@ func ListSpaceUsersHandler(w http.ResponseWriter,r *http.Request) {
 	listUserResponse.Code = 0
 	respBody, _ := json.Marshal(listUserResponse)
 
-	fmt.Fprintf(w,string(respBody))
+	fmt.Fprintf(w, string(respBody))
+}
+
+
+func ListRootSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
+
+	authorization := r.Header.Get("Authorization")
+	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	listUserRequest := ListUserRequest{}
+	listUserResponse := ListUserResponse{}
+
+	bodyData, err := ioutil.ReadAll(r.Body)
+
+	if err != nil {
+		fmt.Println("Invalid Request Body")
+		listUserResponse.Code = errorcode.ErrInvalidRequestBody
+		body, _ := json.Marshal(listUserResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	json.Unmarshal(bodyData, &listUserRequest)
+
+	metadClient, err := makeMetadClient(listUserRequest.InstanceID)
+	if err != nil {
+		fmt.Println("Create MetadClient Error ", err.Error())
+		listUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
+
+	listUserReq := nebula_metad.NewListUsersReq()
+
+	listUserResp, err := metadClient.ListUsers(listUserReq)
+
+	if listUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("List User Failed")
+		listUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	spaceID := nebula.GraphSpaceID(0)
+
+	listUserResponse.UserRoles = make(map[string]string)
+
+	for user, userid := range listUserResp.Users {
+		fmt.Println("Get Roles of ", userid, user)
+
+		getUserRolesReq := nebula_metad.NewGetUserRolesReq()
+		getUserRolesReq.Account = user
+
+		roleResp, err := metadClient.GetUserRoles(getUserRolesReq)
+		if err != nil  {
+			fmt.Println("Get User " + user + " error " + err.Error() )
+			continue
+		}
+
+		for _, role := range roleResp.Roles {
+
+			if role.SpaceID == spaceID {
+				switch role.RoleType {
+				case nebula.RoleType_GOD:
+					listUserResponse.UserRoles[role.User] = "GOD"
+				case nebula.RoleType_ADMIN:
+					listUserResponse.UserRoles[role.User] = "ADMIN"
+				case nebula.RoleType_DBA:
+					listUserResponse.UserRoles[role.User] = "DBA"
+				case nebula.RoleType_USER:
+					listUserResponse.UserRoles[role.User] = "USER"
+				case nebula.RoleType_GUEST:
+					listUserResponse.UserRoles[role.User] = "GUEST"
+				}
+
+			}
+		}
+	}
+
+	listUserResponse.Code = 0
+	respBody, _ := json.Marshal(listUserResponse)
+
+	fmt.Fprintf(w, string(respBody))
+}
+
+
+func getSpaceID(spaceName string, metadClient *nebula_metad.MetaServiceClient) (nebula.GraphSpaceID, error) {
+	getSpaceReq := nebula_metad.NewGetSpaceReq()
+	fmt.Println("SpaceName is ", spaceName)
+	getSpaceReq.SpaceName = spaceName
+	getSpaceResp, err := metadClient.GetSpace(getSpaceReq)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if getSpaceResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		return -1, fmt.Errorf("Not Found Spaces")
+	}
+
+	spaceID := getSpaceResp.Item.SpaceID
+	fmt.Println("SpaceID is ", getSpaceResp.Item.SpaceID)
+	return spaceID, nil
 }
