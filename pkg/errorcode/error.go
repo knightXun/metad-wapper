@@ -15,4 +15,6 @@ const (
 	ErrUserExisted = 40012
 	ErrGrantRoleFailed = 40013
 	ErrInitialUserFailed = 40014
+	ErrInternalError = 40015
+	ErrSpaceNotFound = 40016
 )
