@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-init
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+        - name: data-init
+          image: knightxun/nebula-data-init
+          env:
+            - name: graphd_ip
+              value: 127.0.0.1
+      restartPolicy: Never
+  backoffLimit: 10
+  completions: 1

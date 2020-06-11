@@ -3,17 +3,20 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+	"io/ioutil"
+
 	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
 	"github.com/vesoft-inc-private/nebula-operator/pkg/errorcode"
 	nebula "github.com/vesoft-inc/nebula-go/nebula"
 	nebula_metad "github.com/vesoft-inc/nebula-go/nebula/meta"
-	"io/ioutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"log"
-	"net/http"
-	"time"
 )
 
 var client *kubernetes.Clientset
@@ -76,6 +79,7 @@ func main() {
 	http.HandleFunc("/initialize", InitializeHandler)
 	http.HandleFunc("/list/spaces/users", ListSpaceUsersHandler)
 	http.HandleFunc("/list/rootspaces/users", ListRootSpaceUsersHandler)
+	http.HandleFunc("/instance/version", InstanceVersion)
 
 	err := http.ListenAndServe("0.0.0.0:8880", nil)
 
@@ -92,6 +96,24 @@ type ListSpaceResponse struct {
 	InstanceID string
 	Spaces     []string
 	Code       int
+}
+
+type InstanceInfoRequest struct {
+	InstanceID string
+}
+
+type InstanceInfo struct {
+	DiskUsage 	int64   `json:"diskUsage,omitempty"`
+	TotalDiskSpace int64	`json:"totalDiskSpace,omitempty"`
+	Component string	`json:"component"`
+	Version   string	`json:"version"`
+	CommitID  string	`json:"commitID"`
+	BuildTime string	`json:"buildTime"`
+}
+
+type InstanceInfoResponse struct {
+	Code       int
+	Infos []InstanceInfo `json:"data"`
 }
 
 type CreateSpaceRequest struct {
@@ -131,14 +153,217 @@ type RevokeUserResponse struct {
 	Code int
 }
 
+
+func GetPVCUsage(instance string) (map[string]int64, error){
+
+	res := map[string]int64{}
+	httpPath := "http://prometheus.kube-system:9090/api/v1/query?query=sum(kubelet_volume_stats_capacity_bytes{namespace=\"" + instance + "\"}-kubelet_volume_stats_available_bytes{namespace=\"" + instance + "\"})by(persistentvolumeclaim)"
+
+	httpClient := http.Client{
+		Timeout: time.Second * 5,
+	}
+
+	resp, err := httpClient.Get(httpPath)
+
+	if err != nil {
+		return res, err
+	}
+
+	type PrometheusResult struct {
+		Metric map[string]string `json:"metric"`
+		Value []interface{} `json:"value"`
+	}
+
+	type PrometheusData struct {
+		Data   []PrometheusResult `json:"result"`
+	}
+
+	type PrometheusQueryResult struct {
+		Status string         `json:"status"`
+		Data PrometheusData `json:"data"`
+	}
+
+	prometheusQueryResult := PrometheusQueryResult{}
+
+	bodyData, _ := ioutil.ReadAll(resp.Body)
+
+	json.Unmarshal(bodyData, &prometheusQueryResult)
+
+	if prometheusQueryResult.Status != "success" {
+		return res, fmt.Errorf("query prometheus error")
+	}
+
+	for _, metric := range prometheusQueryResult.Data.Data {
+		if len(metric.Value) != 2 {
+			continue
+		}
+
+		diskUsageStr := metric.Value[1].(string)
+
+		usage, err := strconv.Atoi(diskUsageStr)
+
+		if err != nil {
+			continue
+		}
+
+		res[metric.Metric["persistentvolumeclaim"]] = int64(usage)
+	}
+
+	return res, nil
+}
+
+func InstanceVersion(w http.ResponseWriter, r *http.Request) {
+	instanceInfoRequest := InstanceInfoRequest{}
+	instanceInfoResponse := InstanceInfoResponse{}
+	bodyData, err := ioutil.ReadAll(r.Body)
+
+	if err != nil {
+		instanceInfoResponse.Code = errorcode.ErrInvalidRequestBody
+		body, _ := json.Marshal(instanceInfoResponse)
+		w.Write(body)
+
+		fmt.Println("Invalid InstanceInfoRequest Body")
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	json.Unmarshal(bodyData, &instanceInfoRequest)
+
+	fmt.Printf("Get Instance %v Version", instanceInfoRequest.InstanceID)
+
+	pods, err := client.CoreV1().Pods(instanceInfoRequest.InstanceID).List(metav1.ListOptions{})
+
+	if err != nil {
+		instanceInfoResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(instanceInfoResponse)
+		w.Write(body)
+
+		log.Printf("List Pods Error: %s", err.Error())
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	type NebulaVersionResponse struct {
+		Status string `json:"status"`
+		BuildTime string `json:"build_time"`
+		GitCommitID string `json:"git_info_sha"`
+		Version     string `json:"version"`
+	}
+
+	diskUsage, err := GetPVCUsage(instanceInfoRequest.InstanceID)
+
+	if err != nil {
+		instanceInfoResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(instanceInfoResponse)
+		w.Write(body)
+
+		log.Println("List PVC Error: %v", err.Error())
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+
+	for _, pod := range pods.Items {
+		log.Println("Get %v Version", pod.Name)
+		if strings.Contains(pod.Name, "graphd") {
+			graphdHttpPath := "http://" + pod.Status.PodIP + ":13000"
+			httpClient := http.Client{
+				Timeout: time.Second * 5,
+			}
+
+			resp, err := httpClient.Get(graphdHttpPath)
+
+			if err != nil {
+				log.Println("Get Graphd Version Failed")
+				continue
+			}
+
+			bodyData, err := ioutil.ReadAll(resp.Body)
+
+			versionResponse := NebulaVersionResponse{}
+			json.Unmarshal(bodyData, &versionResponse)
+
+			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+				Component: "graphd",
+				Version: versionResponse.Version,
+				CommitID: versionResponse.GitCommitID,
+				BuildTime: versionResponse.BuildTime,
+			})
+
+		} else if strings.Contains(pod.Name, "metad") {
+			metadHttpPath := "http://" + pod.Status.PodIP + ":11000"
+			httpClient := http.Client{
+				Timeout: time.Second * 5,
+			}
+
+			resp, err := httpClient.Get(metadHttpPath)
+
+			if err != nil {
+				log.Println("Get Graphd Version Failed")
+				continue
+			}
+
+			bodyData, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Println("Get metad Version Failed")
+				continue
+			}
+
+			versionResponse := NebulaVersionResponse{}
+			json.Unmarshal(bodyData, &versionResponse)
+
+			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+				Component: "metad",
+				Version: versionResponse.Version,
+				CommitID: versionResponse.GitCommitID,
+				BuildTime: versionResponse.BuildTime,
+				TotalDiskSpace: 20 * 1024 * 1024 * 1024,
+				DiskUsage: diskUsage["data-metad-0"],
+			})
+
+		} else if strings.Contains(pod.Name, "storaged") {
+			storagedHttpPath := "http://" + pod.Status.PodIP + ":12000"
+			httpClient := http.Client{
+				Timeout: time.Second * 5,
+			}
+
+			resp, err := httpClient.Get(storagedHttpPath)
+
+			if err != nil {
+				log.Println("Get storaged Version Failed")
+				continue
+			}
+
+			bodyData, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				continue
+			}
+
+			versionResponse := NebulaVersionResponse{}
+			json.Unmarshal(bodyData, &versionResponse)
+
+			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+				Component: "storaged",
+				Version: versionResponse.Version,
+				CommitID: versionResponse.GitCommitID,
+				BuildTime: versionResponse.BuildTime,
+				TotalDiskSpace: 20 * 1024 * 1024 * 1024,
+				DiskUsage: diskUsage["data-storaged-0"],
+			})
+		}
+	}
+
+	respBody, _ := json.Marshal(instanceInfoResponse)
+
+	w.Write(respBody)
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("List Spaces")
 
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
 
 	listSpaceRequest := ListSpaceRequest{}
 	listSpaceResponse := ListSpaceResponse{}
@@ -228,12 +453,6 @@ func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 func CreateSpaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Begin Create Space")
-	authorization := r.Header.Get("Authorization")
-	fmt.Println("Authorization is " + authorization)
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
 
 	createSpaceRequest := CreateSpaceRequest{}
 
@@ -285,13 +504,6 @@ func CreateSpaceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func InitializeHandler(w http.ResponseWriter, r *http.Request) {
-
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
 	createUserRequest := CreateUserRequest{}
 	createUserResponse := CreateUserResponse{}
 	bodyData, err := ioutil.ReadAll(r.Body)
@@ -396,12 +608,6 @@ func InitializeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
 	createUserRequest := CreateUserRequest{}
 	createUserResponse := CreateUserResponse{}
 	bodyData, err := ioutil.ReadAll(r.Body)
@@ -549,12 +755,6 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
 	deleteUserRequest := RevokeUserRequest{}
 	deleteUserResponse := RevokeUserResponse{}
 
@@ -652,13 +852,6 @@ func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
-
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
 	listUserRequest := ListUserRequest{}
 	listUserResponse := ListUserResponse{}
 
@@ -778,13 +971,6 @@ func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListRootSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
-
-	authorization := r.Header.Get("Authorization")
-	if authorization != "sasaassoijkllllllljjjjjjjjjasqqqwweeas9900001223" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
 	listUserRequest := ListUserRequest{}
 	listUserResponse := ListUserResponse{}
 

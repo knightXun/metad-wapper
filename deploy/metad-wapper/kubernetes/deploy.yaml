@@ -9,7 +9,7 @@ kind: Deployment
 metadata:
   name: metad-wapper
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: metad-wapper
@@ -21,7 +21,7 @@ spec:
       serviceAccountName: metad-wapper
       containers:
       - name: metad-wapper
-        image: knightxun/metad-wapper:latest
+        image: knightxun/metad-wapper:v1
         imagePullPolicy: Always
         ports:
         - name: http
@@ -48,8 +48,8 @@ metadata:
   name: metad-wapper
 rules:
   - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get"]
+    resources: ["services","pods", "persistentvolumeclaims"]
+    verbs: ["get","list"]
 
 ---
 kind: ClusterRole
@@ -58,8 +58,8 @@ metadata:
   name: metad-wapper
 rules:
   - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get"]
+    resources: ["services","pods", "persistentvolumeclaims"]
+    verbs: ["get","list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
