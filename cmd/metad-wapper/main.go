@@ -3,12 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
-	"io/ioutil"
 
 	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
 	"github.com/vesoft-inc-private/nebula-operator/pkg/errorcode"
@@ -231,7 +230,7 @@ func InstanceVersion(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("Get Instance %v Version", instanceInfoRequest.InstanceID)
 
-	pods, err := client.CoreV1().Pods(instanceInfoRequest.InstanceID).List(metav1.ListOptions{})
+	//pods, err := client.CoreV1().Pods(instanceInfoRequest.InstanceID).List(metav1.ListOptions{})
 
 	if err != nil {
 		instanceInfoResponse.Code = errorcode.ErrInternalError
@@ -264,96 +263,113 @@ func InstanceVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 
-	for _, pod := range pods.Items {
-		log.Println("Get %v Version", pod.Name)
-		if strings.Contains(pod.Name, "graphd") {
-			graphdHttpPath := "http://" + pod.Status.PodIP + ":13000"
-			httpClient := http.Client{
-				Timeout: time.Second * 5,
-			}
+	//for _, pod := range pods.Items {
+	//	log.Println("Get %v Version", pod.Name)
+	//	if strings.Contains(pod.Name, "graphd") {
+	//		graphdHttpPath := "http://" + pod.Status.PodIP + ":13000"
+	//		httpClient := http.Client{
+	//			Timeout: time.Second * 5,
+	//		}
+	//
+	//		resp, err := httpClient.Get(graphdHttpPath)
+	//
+	//		if err != nil {
+	//			log.Println("Get Graphd Version Failed")
+	//			continue
+	//		}
+	//
+	//		bodyData, err := ioutil.ReadAll(resp.Body)
+	//
+	//		versionResponse := NebulaVersionResponse{}
+	//		json.Unmarshal(bodyData, &versionResponse)
+	//
+	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+	//			Component: "graphd",
+	//			Version: versionResponse.Version,
+	//			CommitID: versionResponse.GitCommitID,
+	//			BuildTime: versionResponse.BuildTime,
+	//		})
+	//
+	//	} else if strings.Contains(pod.Name, "metad") {
+	//		metadHttpPath := "http://" + pod.Status.PodIP + ":11000"
+	//		httpClient := http.Client{
+	//			Timeout: time.Second * 5,
+	//		}
+	//
+	//		resp, err := httpClient.Get(metadHttpPath)
+	//
+	//		if err != nil {
+	//			log.Println("Get Graphd Version Failed")
+	//			continue
+	//		}
+	//
+	//		bodyData, err := ioutil.ReadAll(resp.Body)
+	//		if err != nil {
+	//			log.Println("Get metad Version Failed")
+	//			continue
+	//		}
+	//
+	//		versionResponse := NebulaVersionResponse{}
+	//		json.Unmarshal(bodyData, &versionResponse)
+	//
+	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+	//			Component: "metad",
+	//			Version: versionResponse.Version,
+	//			CommitID: versionResponse.GitCommitID,
+	//			BuildTime: versionResponse.BuildTime,
+	//			TotalDiskSpace: 20 * 1024 * 1024 * 1024,
+	//			DiskUsage: diskUsage["data-metad-0"],
+	//		})
+	//
+	//	} else if strings.Contains(pod.Name, "storaged") {
+	//		storagedHttpPath := "http://" + pod.Status.PodIP + ":12000"
+	//		httpClient := http.Client{
+	//			Timeout: time.Second * 5,
+	//		}
+	//
+	//		resp, err := httpClient.Get(storagedHttpPath)
+	//
+	//		if err != nil {
+	//			log.Println("Get storaged Version Failed")
+	//			continue
+	//		}
+	//
+	//		bodyData, err := ioutil.ReadAll(resp.Body)
+	//		if err != nil {
+	//			continue
+	//		}
+	//
+	//		versionResponse := NebulaVersionResponse{}
+	//		json.Unmarshal(bodyData, &versionResponse)
+	//
+	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+	//			Component: "storaged",
+	//			Version: versionResponse.Version,
+	//			CommitID: versionResponse.GitCommitID,
+	//			BuildTime: versionResponse.BuildTime,
+	//			TotalDiskSpace: 20 * 1024 * 1024 * 1024,
+	//			DiskUsage: diskUsage["data-storaged-0"],
+	//		})
+	//	}
+	//}
 
-			resp, err := httpClient.Get(graphdHttpPath)
-
-			if err != nil {
-				log.Println("Get Graphd Version Failed")
-				continue
-			}
-
-			bodyData, err := ioutil.ReadAll(resp.Body)
-
-			versionResponse := NebulaVersionResponse{}
-			json.Unmarshal(bodyData, &versionResponse)
-
-			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
-				Component: "graphd",
-				Version: versionResponse.Version,
-				CommitID: versionResponse.GitCommitID,
-				BuildTime: versionResponse.BuildTime,
-			})
-
-		} else if strings.Contains(pod.Name, "metad") {
-			metadHttpPath := "http://" + pod.Status.PodIP + ":11000"
-			httpClient := http.Client{
-				Timeout: time.Second * 5,
-			}
-
-			resp, err := httpClient.Get(metadHttpPath)
-
-			if err != nil {
-				log.Println("Get Graphd Version Failed")
-				continue
-			}
-
-			bodyData, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Println("Get metad Version Failed")
-				continue
-			}
-
-			versionResponse := NebulaVersionResponse{}
-			json.Unmarshal(bodyData, &versionResponse)
-
-			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
-				Component: "metad",
-				Version: versionResponse.Version,
-				CommitID: versionResponse.GitCommitID,
-				BuildTime: versionResponse.BuildTime,
-				TotalDiskSpace: 20 * 1024 * 1024 * 1024,
-				DiskUsage: diskUsage["data-metad-0"],
-			})
-
-		} else if strings.Contains(pod.Name, "storaged") {
-			storagedHttpPath := "http://" + pod.Status.PodIP + ":12000"
-			httpClient := http.Client{
-				Timeout: time.Second * 5,
-			}
-
-			resp, err := httpClient.Get(storagedHttpPath)
-
-			if err != nil {
-				log.Println("Get storaged Version Failed")
-				continue
-			}
-
-			bodyData, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				continue
-			}
-
-			versionResponse := NebulaVersionResponse{}
-			json.Unmarshal(bodyData, &versionResponse)
-
+	for pvc,usage := range diskUsage {
+		if pvc == "data-storaged-0" {
 			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
 				Component: "storaged",
-				Version: versionResponse.Version,
-				CommitID: versionResponse.GitCommitID,
-				BuildTime: versionResponse.BuildTime,
-				TotalDiskSpace: 20 * 1024 * 1024 * 1024,
-				DiskUsage: diskUsage["data-storaged-0"],
+				DiskUsage: usage,
+				Version: "v1.0.0",
+			})
+		}
+
+		if pvc == "data-metad-0" {
+			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
+				Component: "metad",
+				DiskUsage: usage,
+				Version: "v1.0.0",
 			})
 		}
 	}
-
 	respBody, _ := json.Marshal(instanceInfoResponse)
 
 	w.Write(respBody)
