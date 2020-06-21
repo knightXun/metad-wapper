@@ -125,6 +125,7 @@ type CreateUserRequest struct {
 	UserName   string
 	Role       string
 	SpaceName  string
+	Account    string
 }
 
 type CreateUserResponse struct {
@@ -146,6 +147,7 @@ type RevokeUserRequest struct {
 	UserName   string
 	Space      string
 	Role       string
+	Account    string
 }
 
 type RevokeUserResponse struct {
@@ -623,6 +625,32 @@ func InitializeHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func GetUserRoles(user , spaceName string, metadClient *nebula_metad.MetaServiceClient ) (nebula.RoleType, error) {
+	spaceID, err := getSpaceID(spaceName, metadClient)
+	if err != nil {
+		fmt.Println("List User Failed")
+		return -1, fmt.Errorf("Inner Error")
+	}
+
+	getUserRolesReq := nebula_metad.NewGetUserRolesReq()
+	getUserRolesReq.Account = user
+
+	roleResp, err := metadClient.GetUserRoles(getUserRolesReq)
+	if err != nil {
+		fmt.Println("Get User " + user + " error " + err.Error())
+		return -1, fmt.Errorf("Inner Error")
+	}
+
+	for _, role := range roleResp.Roles {
+		if role.SpaceID == spaceID {
+			fmt.Println("Account Role is: ", role.RoleType)
+			return role.RoleType, nil
+		}
+	}
+
+	return nebula.RoleType_GUEST, nil
+}
+
 func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	createUserRequest := CreateUserRequest{}
 	createUserResponse := CreateUserResponse{}
@@ -657,6 +685,41 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	roleType := nebula.RoleType_GUEST
+	switch createUserRequest.Role {
+	case "GOD":
+		roleType = nebula.RoleType_GOD
+	case "ADMIN":
+		roleType = nebula.RoleType_ADMIN
+	case "DBA":
+		roleType = nebula.RoleType_DBA
+	case "USER":
+		roleType = nebula.RoleType_USER
+	case "GUEST":
+		roleType = nebula.RoleType_GUEST
+	}
+
+	revokerRole, err := GetUserRoles(createUserRequest.Account, createUserRequest.SpaceName, metadClient)
+	if err != nil {
+		fmt.Println("Create User Failed ", err.Error())
+		createUserResponse.Code = errorcode.ErrGrantRoleFailed
+		body, _ := json.Marshal(createUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if revokerRole > roleType {
+		fmt.Println("Create User Failed: FatherAccount Role larger then Role")
+		createUserResponse.Code = errorcode.ErrGrantRoleFailed
+		body, _ := json.Marshal(createUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	createUserReq := nebula_metad.NewCreateUserReq()
 
 	createUserReq.IfNotExists = true
@@ -689,20 +752,6 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	grantRoleReq := nebula_metad.NewGrantRoleReq()
 	grantRoleReq.RoleItem = nebula.NewRoleItem()
-
-	roleType := nebula.RoleType_GUEST
-	switch createUserRequest.Role {
-	case "GOD":
-		roleType = nebula.RoleType_GOD
-	case "ADMIN":
-		roleType = nebula.RoleType_ADMIN
-	case "DBA":
-		roleType = nebula.RoleType_DBA
-	case "USER":
-		roleType = nebula.RoleType_USER
-	case "GUEST":
-		roleType = nebula.RoleType_GUEST
-	}
 
 	getSpaceReq := nebula_metad.NewGetSpaceReq()
 	getSpaceReq.SpaceName = createUserRequest.SpaceName
@@ -805,17 +854,6 @@ func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	spaceID, err := getSpaceID(deleteUserRequest.Space, metadClient)
-
-	if err != nil {
-		fmt.Println("Get SpaceID Failed ", err.Error())
-		deleteUserResponse.Code = errorcode.ErrInternalError
-		body, _ := json.Marshal(deleteUserResponse)
-		w.Write(body)
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-
 	roleType := nebula.RoleType_GUEST
 	switch deleteUserRequest.Role {
 	case "GOD":
@@ -828,6 +866,39 @@ func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
 		roleType = nebula.RoleType_USER
 	case "GUEST":
 		roleType = nebula.RoleType_GUEST
+	}
+
+	revokerRole, err := GetUserRoles(deleteUserRequest.Account, deleteUserRequest.Space, metadClient)
+	if err != nil {
+		fmt.Println("Delete User Failed ", err.Error())
+		deleteUserResponse.Code = errorcode.ErrGrantRoleFailed
+		body, _ := json.Marshal(deleteUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if revokerRole > roleType {
+		fmt.Println("Delete User Failed")
+		deleteUserResponse.Code = errorcode.ErrGrantRoleFailed
+		body, _ := json.Marshal(deleteUserResponse)
+		w.Write(body)
+
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+
+	spaceID, err := getSpaceID(deleteUserRequest.Space, metadClient)
+
+	if err != nil {
+		fmt.Println("Get SpaceID Failed ", err.Error())
+		deleteUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(deleteUserResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
 	}
 
 	dropUserReq := nebula_metad.NewRevokeRoleReq()
