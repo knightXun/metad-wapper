@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: nebula-python
+Version: 1.0.0rc4
+Summary: Python client for Nebula Graph
+Home-page: https://github.com/vesoft-inc/nebula-python
+Author: darion.wang
+Author-email: darion.wang@vesoft-inc.com
+License: UNKNOWN
+Description: UNKNOWN
+Platform: 2.7, 3.5, 3.7

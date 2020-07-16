@@ -1,0 +1,6 @@
+httplib2
+future
+six
+
+[:python_version == "2.7"]
+futures

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	corev1 "k8s.io/api/core/v1"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
@@ -40,7 +43,7 @@ func makeKubeClient() *kubernetes.Clientset {
 }
 
 func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
-	metadSvc, err := client.CoreV1().Services(ns).Get("nebula-metad", metav1.GetOptions{})
+	metadSvc, err := client.CoreV1().Services(ns).Get(context.Background(),"nebula-metad", metav1.GetOptions{})
 
 	if err != nil {
 		return nil, err
@@ -74,6 +77,8 @@ func main() {
 	http.HandleFunc("/list/spaces", ListSpaceHandler)
 	http.HandleFunc("/create/spaces", CreateSpaceHandler)
 	http.HandleFunc("/create/users", CreateUserHandler)
+	http.HandleFunc("/clusterCost", ClusterCosts)
+	http.HandleFunc("/changeGod", changeGod)
 	http.HandleFunc("/delete/users", revokeUsersHandler)
 	http.HandleFunc("/initialize", InitializeHandler)
 	http.HandleFunc("/list/spaces/users", ListSpaceUsersHandler)
@@ -127,8 +132,17 @@ type CreateUserRequest struct {
 	SpaceName  string
 	Account    string
 }
-
 type CreateUserResponse struct {
+	Code int
+}
+
+type TransferGodUserRequest struct {
+	InstanceID string
+	UserName   string
+	OldName    string
+}
+
+type TransferGodUserResponse struct {
 	Code int
 }
 
@@ -155,6 +169,41 @@ type RevokeUserResponse struct {
 	Code int
 }
 
+type Machine struct {
+	Duration string `json:"duration,omitempty"`
+	Cpu int64 	`json:"cpu,omitempty"`
+	Memory int64 `json:"memory,omitempty"`
+}
+
+type Disk struct {
+	Duration 	string `json:"duration,omitempty"`
+	Size 		int64  `json:"size,omitempty"`
+}
+
+type LoadBalacer struct {
+	Duration 	string `json:"duration,omitempty"`
+	Band 		int64 	`json:"band,omitempty"`
+}
+
+type Instance struct {
+	InstanceName string `json:"instanceName,omitempty"`
+	Cpu 		 int64 `json:"cpu,omitempty"`
+	Memory 		 int64 `json:"memory,omitempty"`
+	Disks  		 []Disk `json:"Disks,omitempty"`
+}
+
+type ClusterCost struct {
+	ClusterName 	string  `json:"clusterName,omitempty"`
+	Machines 		[]Machine `json:"machines,omitempty"`
+	Disks    		[]Disk		`json:"disks,omitempty"`
+	LoadBalacer 	[]LoadBalacer `json:"loadBalacer,omitempty"`
+	Instances  		[]Instance  `json:"instances,omitempty"`
+}
+
+type ClusterCostResponse struct {
+	Code 		int 		`json:"code,omitempty"`
+	ClusterCost ClusterCost `json:"clusterCost,omitempty"`
+}
 
 func GetPVCUsage(instance string) (map[string]int64, error){
 
@@ -380,6 +429,114 @@ func InstanceVersion(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func ClusterCosts(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Get Cluster Costs")
+
+	clusterCostResponse := ClusterCostResponse{}
+
+	nss, err := client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Println("Inner Error: %v", err)
+		clusterCostResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(clusterCostResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	for _, ns := range nss.Items {
+		pvcs, err := client.CoreV1().PersistentVolumeClaims(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			fmt.Println("Inner Error: %v", err)
+			clusterCostResponse.Code = errorcode.ErrInternalError
+			body, _ := json.Marshal(clusterCostResponse)
+			w.Write(body)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		if strings.Contains(ns.Name, "nebula") {
+			instance := Instance{
+				InstanceName: ns.Name,
+				Cpu: 1,
+				Memory: 1024,
+			}
+
+			for _, pvc := range pvcs.Items {
+				size := pvc.Status.Capacity.Storage().Value()
+				duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
+				instance.Disks = append(instance.Disks, Disk{
+					Duration: duration,
+					Size: int64(size/(1024*1024*1024)),
+				})
+
+				//clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
+				//	Duration: duration,
+				//	Size: int64(size/(1024*1024*1024)),
+				//})
+			}
+
+			clusterCostResponse.ClusterCost.Instances = append(clusterCostResponse.ClusterCost.Instances, instance)
+		} else {
+			for _, pvc := range pvcs.Items {
+				size := pvc.Status.Capacity.Storage().Value()
+				duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
+
+				clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
+					Duration: duration,
+					Size: int64(size/(1024*1024*1024)),
+				})
+			}
+		}
+
+		loadBalancers, err := client.CoreV1().Services(ns.Name).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			fmt.Println("List LoadBalancer In %s Failed: %v", ns.Name, err )
+			continue
+		}
+		for _, loadBalancer := range loadBalancers.Items {
+			duration := time.Now().Sub(loadBalancer.CreationTimestamp.Time).String()
+			if loadBalancer.Spec.Type == corev1.ServiceTypeLoadBalancer {
+				clusterCostResponse.ClusterCost.LoadBalacer = append(clusterCostResponse.ClusterCost.LoadBalacer, LoadBalacer{
+					Duration: duration,
+					Band: 10,
+				})
+			}
+		}
+	}
+
+	nodes, err := client.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+
+	if err != nil {
+		fmt.Println("Inner Error: %v", err)
+		clusterCostResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(clusterCostResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	for _, node := range nodes.Items {
+		cpu := node.Status.Capacity.Cpu().Value()
+		memory := node.Status.Capacity.Memory().Value()
+		duration := time.Now().Sub(node.CreationTimestamp.Time).String()
+		clusterCostResponse.ClusterCost.Machines = append(clusterCostResponse.ClusterCost.Machines, Machine{
+			Duration: duration,
+			Cpu: cpu,
+			Memory: memory/(1024*1024),
+		})
+	}
+
+	respBody, _ := json.Marshal(clusterCostResponse)
+
+	fmt.Println("Get Cluster Costs Done")
+
+	w.Write(respBody)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+
 func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("List Spaces")
 
@@ -519,6 +676,124 @@ func CreateSpaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Create Space Done")
 	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func changeGod(w http.ResponseWriter, r *http.Request) {
+
+	transferGodUserRequest := TransferGodUserRequest{}
+	transferGodUserResponse := TransferGodUserResponse{}
+	bodyData, err := ioutil.ReadAll(r.Body)
+
+	if err != nil {
+		transferGodUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	json.Unmarshal(bodyData, &transferGodUserRequest)
+
+	metadClient, err := makeMetadClient(transferGodUserRequest.InstanceID)
+	if err != nil {
+		fmt.Println("Create MetadClient Error!")
+		transferGodUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
+
+	createUserReq := nebula_metad.NewCreateUserReq()
+
+	createUserReq.Account = transferGodUserRequest.UserName
+
+	createUserResp, err := metadClient.CreateUser(createUserReq)
+
+	if err != nil {
+
+		fmt.Println("MetadClient Create User Failed !", err.Error())
+		transferGodUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	if createUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED &&
+		createUserResp.Code != nebula_metad.ErrorCode_E_EXISTED {
+
+		fmt.Println("Create User Failed")
+		transferGodUserResponse.Code = errorcode.ErrUserExisted
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	if createUserResp.Code == nebula_metad.ErrorCode_E_EXISTED {
+		transferGodUserResponse.Code = 0
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	fmt.Println("Create USER " + transferGodUserRequest.UserName + " Success")
+
+	grantRoleReq := nebula_metad.NewGrantRoleReq()
+	grantRoleReq.RoleItem = nebula.NewRoleItem()
+
+	grantRoleReq.RoleItem.RoleType = nebula.RoleType_GOD
+	grantRoleReq.RoleItem.User = transferGodUserRequest.UserName
+	grantRoleReq.RoleItem.SpaceID = 0
+
+	fmt.Println("Begin Grant " + transferGodUserRequest.UserName + " to GOD")
+	grantRoleResp, err := metadClient.GrantRole(grantRoleReq)
+	if err != nil {
+		fmt.Println("Grant Roles Failed: " + err.Error())
+		transferGodUserResponse.Code = errorcode.ErrInitialUserFailed
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+	if grantRoleResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("Grant Roles ErrorCode is : ", grantRoleResp.Code)
+		transferGodUserResponse.Code = errorcode.ErrInitialUserFailed
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+
+	dropUserReq := nebula_metad.NewDropUserReq()
+	dropUserReq.Account = transferGodUserRequest.OldName
+	_, err = metadClient.DropUser(dropUserReq)
+	if err != nil {
+		fmt.Println("MetadClient Create User Failed !", err.Error())
+		transferGodUserResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(transferGodUserResponse)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(body)
+		return
+	}
+
+
+	transferGodUserResponse.Code = 0
+	body, _ := json.Marshal(transferGodUserResponse)
+	w.WriteHeader(http.StatusOK)
+	w.Write(body)
+	fmt.Println("Create GOD User" + transferGodUserRequest.UserName + " Success!")
 	return
 }
 
@@ -729,10 +1004,10 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Printf("User %s Role is %d\n", createUserRequest.Account, operatorRole)
 
-	userRole, err := GetUserRoles(createUserRequest.UserName, createUserRequest.SpaceName, metadClient)
-	if err == nil {
-		roleType = userRole
-	}
+	//userRole, err := GetUserRoles(createUserRequest.UserName, createUserRequest.SpaceName, metadClient)
+	//if err == nil {
+	//	roleType = userRole
+	//}
 	fmt.Printf("User %s Role is %d\n", createUserRequest.UserName, operatorRole)
 
 	if operatorRole > roleType {
@@ -962,6 +1237,20 @@ func revokeUsersHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func rolesToString(role nebula.RoleType) string {
+	if role == nebula.RoleType_GOD {
+		return "GOD"
+	} else if role == nebula.RoleType_ADMIN {
+		return "ADMIN"
+	} else if role == nebula.RoleType_DBA {
+		return "DBA"
+	} else if role == nebula.RoleType_USER {
+		return "USER"
+	} else {
+		return "GUEST"
+	}
+}
+
 func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
 	listUserRequest := ListUserRequest{}
 	listUserResponse := ListUserResponse{}
@@ -999,10 +1288,19 @@ func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
 	operatorRole, err := GetUserRoles(listUserRequest.Operator, listUserRequest.SpaceName, metadClient)
 	if err != nil {
 		fmt.Println("Invalid Request Body")
-		listUserResponse.Code = errorcode.ErrInvalidRequestBody
+		listUserResponse.Code = errorcode.ErrNotFound
 		body, _ := json.Marshal(listUserResponse)
 		w.Write(body)
 		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if operatorRole >  nebula.RoleType_ADMIN {
+		listUserResponse.Code = 0
+		listUserResponse.UserRoles = make(map[string]string)
+		listUserResponse.UserRoles[listUserRequest.Operator] = rolesToString(operatorRole)
+		respBody, _ := json.Marshal(listUserResponse)
+		fmt.Fprintf(w, string(respBody))
 		return
 	}
 
@@ -1068,10 +1366,22 @@ func ListSpaceUsersHandler(w http.ResponseWriter, r *http.Request) {
 		for _, role := range roleResp.Roles {
 
 			if role.SpaceID == spaceID {
-				if role.RoleType > operatorRole {
+				if nebula.RoleType_GOD == operatorRole {
 					switch role.RoleType {
 					case nebula.RoleType_GOD:
 						listUserResponse.UserRoles[role.User] = "GOD"
+					case nebula.RoleType_ADMIN:
+						listUserResponse.UserRoles[role.User] = "ADMIN"
+					case nebula.RoleType_DBA:
+						listUserResponse.UserRoles[role.User] = "DBA"
+					case nebula.RoleType_USER:
+						listUserResponse.UserRoles[role.User] = "USER"
+					case nebula.RoleType_GUEST:
+						listUserResponse.UserRoles[role.User] = "GUEST"
+					}
+				}
+				if nebula.RoleType_ADMIN == operatorRole {
+					switch role.RoleType {
 					case nebula.RoleType_ADMIN:
 						listUserResponse.UserRoles[role.User] = "ADMIN"
 					case nebula.RoleType_DBA:

@@ -48,8 +48,8 @@ metadata:
   name: metad-wapper
 rules:
   - apiGroups: [""]
-    resources: ["services","pods", "persistentvolumeclaims"]
-    verbs: ["get","list"]
+    resources: ["services","pods", "persistentvolumeclaims", "nodes", "namespaces"]
+    verbs: ["get", "list"]
 
 ---
 kind: ClusterRole
@@ -58,8 +58,8 @@ metadata:
   name: metad-wapper
 rules:
   - apiGroups: [""]
-    resources: ["services","pods", "persistentvolumeclaims"]
-    verbs: ["get","list"]
+    resources: ["services","pods", "persistentvolumeclaims", "nodes", "namespaces"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
