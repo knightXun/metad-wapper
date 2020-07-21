@@ -19,12 +19,31 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	metricsv1beta1api "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 var client *kubernetes.Clientset
+var metricsClient *metricsclientset.Clientset
 
 func init() {
 	client = makeKubeClient()
+	metricsClient = makeMetircClient()
+}
+
+func makeMetircClient() *metricsclientset.Clientset {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Fatalf("Can't Create K8s Client: %v", err)
+	}
+
+	metricsClient, err := metricsclientset.NewForConfig(config)
+
+	if err != nil {
+		log.Fatalf("Can't Create K8s Client: %v", err)
+		return nil
+	}
+	return metricsClient
 }
 
 func makeKubeClient() *kubernetes.Clientset {
@@ -177,7 +196,8 @@ type Machine struct {
 
 type Disk struct {
 	Duration 	string `json:"duration,omitempty"`
-	Size 		int64  `json:"size,omitempty"`
+	Size 		int64 	`json:"size,omitempty"`
+	Usage       int64   `json:"usage,omitempty"`
 }
 
 type LoadBalacer struct {
@@ -188,8 +208,10 @@ type LoadBalacer struct {
 type Instance struct {
 	InstanceName string `json:"instanceName,omitempty"`
 	Cpu 		 int64 `json:"cpu,omitempty"`
+	CpuUsage     int64 `json:"cpuUsage,omitempty"`
+	MemoryUsage     int64 `json:"memoryUsage,omitempty"`
 	Memory 		 int64 `json:"memory,omitempty"`
-	Disks  		 []Disk `json:"Disks,omitempty"`
+	Disks  		 []Disk `json:"disks,omitempty"`
 }
 
 type ClusterCost struct {
@@ -203,6 +225,14 @@ type ClusterCost struct {
 type ClusterCostResponse struct {
 	Code 		int 		`json:"code,omitempty"`
 	ClusterCost ClusterCost `json:"clusterCost,omitempty"`
+}
+
+func GetPodMertris(instance string) (*metricsv1beta1api.PodMetricsList, error) {
+	m, err := metricsClient.MetricsV1beta1().PodMetricses(instance).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func GetPVCUsage(instance string) (map[string]int64, error){
@@ -314,97 +344,6 @@ func InstanceVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
-	//for _, pod := range pods.Items {
-	//	log.Println("Get %v Version", pod.Name)
-	//	if strings.Contains(pod.Name, "graphd") {
-	//		graphdHttpPath := "http://" + pod.Status.PodIP + ":13000"
-	//		httpClient := http.Client{
-	//			Timeout: time.Second * 5,
-	//		}
-	//
-	//		resp, err := httpClient.Get(graphdHttpPath)
-	//
-	//		if err != nil {
-	//			log.Println("Get Graphd Version Failed")
-	//			continue
-	//		}
-	//
-	//		bodyData, err := ioutil.ReadAll(resp.Body)
-	//
-	//		versionResponse := NebulaVersionResponse{}
-	//		json.Unmarshal(bodyData, &versionResponse)
-	//
-	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
-	//			Component: "graphd",
-	//			Version: versionResponse.Version,
-	//			CommitID: versionResponse.GitCommitID,
-	//			BuildTime: versionResponse.BuildTime,
-	//		})
-	//
-	//	} else if strings.Contains(pod.Name, "metad") {
-	//		metadHttpPath := "http://" + pod.Status.PodIP + ":11000"
-	//		httpClient := http.Client{
-	//			Timeout: time.Second * 5,
-	//		}
-	//
-	//		resp, err := httpClient.Get(metadHttpPath)
-	//
-	//		if err != nil {
-	//			log.Println("Get Graphd Version Failed")
-	//			continue
-	//		}
-	//
-	//		bodyData, err := ioutil.ReadAll(resp.Body)
-	//		if err != nil {
-	//			log.Println("Get metad Version Failed")
-	//			continue
-	//		}
-	//
-	//		versionResponse := NebulaVersionResponse{}
-	//		json.Unmarshal(bodyData, &versionResponse)
-	//
-	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
-	//			Component: "metad",
-	//			Version: versionResponse.Version,
-	//			CommitID: versionResponse.GitCommitID,
-	//			BuildTime: versionResponse.BuildTime,
-	//			TotalDiskSpace: 20 * 1024 * 1024 * 1024,
-	//			DiskUsage: diskUsage["data-metad-0"],
-	//		})
-	//
-	//	} else if strings.Contains(pod.Name, "storaged") {
-	//		storagedHttpPath := "http://" + pod.Status.PodIP + ":12000"
-	//		httpClient := http.Client{
-	//			Timeout: time.Second * 5,
-	//		}
-	//
-	//		resp, err := httpClient.Get(storagedHttpPath)
-	//
-	//		if err != nil {
-	//			log.Println("Get storaged Version Failed")
-	//			continue
-	//		}
-	//
-	//		bodyData, err := ioutil.ReadAll(resp.Body)
-	//		if err != nil {
-	//			continue
-	//		}
-	//
-	//		versionResponse := NebulaVersionResponse{}
-	//		json.Unmarshal(bodyData, &versionResponse)
-	//
-	//		instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
-	//			Component: "storaged",
-	//			Version: versionResponse.Version,
-	//			CommitID: versionResponse.GitCommitID,
-	//			BuildTime: versionResponse.BuildTime,
-	//			TotalDiskSpace: 20 * 1024 * 1024 * 1024,
-	//			DiskUsage: diskUsage["data-storaged-0"],
-	//		})
-	//	}
-	//}
-
 	for pvc,usage := range diskUsage {
 		if pvc == "data-storaged-0" {
 			instanceInfoResponse.Infos = append(instanceInfoResponse.Infos, InstanceInfo{
@@ -455,11 +394,49 @@ func ClusterCosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		pvcUsage, err := GetPVCUsage(ns.Name)
+
 		if strings.Contains(ns.Name, "nebula") {
+			if ns.DeletionTimestamp != nil {
+				continue
+			}
+
+			if err != nil {
+				fmt.Println("Inner Error: %v", err)
+				clusterCostResponse.Code = errorcode.ErrInternalError
+				body, _ := json.Marshal(clusterCostResponse)
+				w.Write(body)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+
+			podMetrics, err := GetPodMertris(ns.Name)
+			if err != nil {
+				fmt.Println("Inner Error: %v", err)
+				clusterCostResponse.Code = errorcode.ErrInternalError
+				body, _ := json.Marshal(clusterCostResponse)
+				w.Write(body)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+
+			cpuUsage := int64(0)
+			memUsage := int64(0)
+
+			for _, metric := range podMetrics.Items {
+				for _, container := range metric.Containers {
+					cpuUsage = cpuUsage + int64(container.Usage.Cpu().Size() )
+					//fmt.Printf("Memory Usage %v: %v",container.Name, container.Usage.Memory().Value()/(1024*1024))
+					memUsage = memUsage + int64(container.Usage.Memory().Value()/(1024*1024))
+				}
+			}
+
 			instance := Instance{
 				InstanceName: ns.Name,
-				Cpu: 1,
+				Cpu: 1000,
 				Memory: 1024,
+				CpuUsage: cpuUsage,
+				MemoryUsage: memUsage,
 			}
 
 			for _, pvc := range pvcs.Items {
@@ -467,13 +444,10 @@ func ClusterCosts(w http.ResponseWriter, r *http.Request) {
 				duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
 				instance.Disks = append(instance.Disks, Disk{
 					Duration: duration,
-					Size: int64(size/(1024*1024*1024)),
+					Size: size,
+					Usage: pvcUsage[pvc.Name],
 				})
 
-				//clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
-				//	Duration: duration,
-				//	Size: int64(size/(1024*1024*1024)),
-				//})
 			}
 
 			clusterCostResponse.ClusterCost.Instances = append(clusterCostResponse.ClusterCost.Instances, instance)
@@ -484,7 +458,8 @@ func ClusterCosts(w http.ResponseWriter, r *http.Request) {
 
 				clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
 					Duration: duration,
-					Size: int64(size/(1024*1024*1024)),
+					Size: size,
+					Usage: pvcUsage[pvc.Name],
 				})
 			}
 		}
