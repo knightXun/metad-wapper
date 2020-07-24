@@ -73,7 +73,6 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 	timeoutOption := thrift.SocketTimeout(time.Second * 5)
 	addressOption := thrift.SocketAddr(metadSvcIp + ":44500")
 
-	fmt.Println("MetaThrift Addr: " + metadSvcIp + ":44500")
 	transport, err := thrift.NewSocket(timeoutOption, addressOption)
 	protocol := thrift.NewBinaryProtocolFactoryDefault()
 	if err != nil {
@@ -655,12 +654,14 @@ func CreateSpaceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func changeGod(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Handle Change GOD Request")
 
 	transferGodUserRequest := TransferGodUserRequest{}
 	transferGodUserResponse := TransferGodUserResponse{}
 	bodyData, err := ioutil.ReadAll(r.Body)
 
 	if err != nil {
+		fmt.Println("Invalid Request Body")
 		transferGodUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(transferGodUserResponse)
 		w.WriteHeader(http.StatusForbidden)
@@ -693,7 +694,6 @@ func changeGod(w http.ResponseWriter, r *http.Request) {
 	createUserResp, err := metadClient.CreateUser(createUserReq)
 
 	if err != nil {
-
 		fmt.Println("MetadClient Create User Failed !", err.Error())
 		transferGodUserResponse.Code = errorcode.ErrInternalError
 		body, _ := json.Marshal(transferGodUserResponse)
@@ -704,7 +704,6 @@ func changeGod(w http.ResponseWriter, r *http.Request) {
 
 	if createUserResp.Code != nebula_metad.ErrorCode_SUCCEEDED &&
 		createUserResp.Code != nebula_metad.ErrorCode_E_EXISTED {
-
 		fmt.Println("Create User Failed")
 		transferGodUserResponse.Code = errorcode.ErrUserExisted
 		body, _ := json.Marshal(transferGodUserResponse)
@@ -713,13 +712,13 @@ func changeGod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if createUserResp.Code == nebula_metad.ErrorCode_E_EXISTED {
-		transferGodUserResponse.Code = 0
-		body, _ := json.Marshal(transferGodUserResponse)
-		w.WriteHeader(http.StatusForbidden)
-		w.Write(body)
-		return
-	}
+	//if createUserResp.Code == nebula_metad.ErrorCode_E_EXISTED {
+	//	transferGodUserResponse.Code = 0
+	//	body, _ := json.Marshal(transferGodUserResponse)
+	//	w.WriteHeader(http.StatusForbidden)
+	//	w.Write(body)
+	//	return
+	//}
 
 	fmt.Println("Create USER " + transferGodUserRequest.UserName + " Success")
 
@@ -768,7 +767,7 @@ func changeGod(w http.ResponseWriter, r *http.Request) {
 	body, _ := json.Marshal(transferGodUserResponse)
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)
-	fmt.Println("Create GOD User" + transferGodUserRequest.UserName + " Success!")
+	fmt.Println("Create GOD User " + transferGodUserRequest.UserName + " Success!")
 	return
 }
 
