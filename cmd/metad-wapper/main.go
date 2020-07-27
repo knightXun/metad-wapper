@@ -197,6 +197,7 @@ type Disk struct {
 	Duration 	string `json:"duration,omitempty"`
 	Size 		int64 	`json:"size,omitempty"`
 	Usage       int64   `json:"usage,omitempty"`
+	DiskName    string   `json:"diskName,omitempty"`
 }
 
 type LoadBalacer struct {
@@ -441,27 +442,35 @@ func ClusterCosts(w http.ResponseWriter, r *http.Request) {
 			for _, pvc := range pvcs.Items {
 				size := pvc.Status.Capacity.Storage().Value()
 				duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
+				name := ""
+				if strings.Contains(pvc.Name, "metad") {
+					name = "metad"
+				} else {
+					name = "storaged"
+				}
 				instance.Disks = append(instance.Disks, Disk{
 					Duration: duration,
 					Size: size,
 					Usage: pvcUsage[pvc.Name],
+					DiskName: name,
 				})
 
 			}
 
 			clusterCostResponse.ClusterCost.Instances = append(clusterCostResponse.ClusterCost.Instances, instance)
-		} else {
-			for _, pvc := range pvcs.Items {
-				size := pvc.Status.Capacity.Storage().Value()
-				duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
-
-				clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
-					Duration: duration,
-					Size: size,
-					Usage: pvcUsage[pvc.Name],
-				})
-			}
 		}
+		//else {
+		//	for _, pvc := range pvcs.Items {
+		//		size := pvc.Status.Capacity.Storage().Value()
+		//		duration := time.Now().Sub(pvc.CreationTimestamp.Time).String()
+		//
+		//		clusterCostResponse.ClusterCost.Disks = append(clusterCostResponse.ClusterCost.Disks, Disk{
+		//			Duration: duration,
+		//			Size: size,
+		//			Usage: pvcUsage[pvc.Name],
+		//		})
+		//	}
+		//}
 
 		loadBalancers, err := client.CoreV1().Services(ns.Name).List(context.Background(), metav1.ListOptions{})
 		if err != nil {
