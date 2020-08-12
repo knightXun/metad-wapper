@@ -112,6 +112,7 @@ func main() {
 
 type ListSpaceRequest struct {
 	InstanceID string
+	UserName   string
 }
 
 type ListSpaceResponse struct {
@@ -523,7 +524,6 @@ func ClusterCosts(w http.ResponseWriter, r *http.Request) {
 func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("List Spaces")
 
-
 	listSpaceRequest := ListSpaceRequest{}
 	listSpaceResponse := ListSpaceResponse{}
 
@@ -592,7 +592,9 @@ func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	listSpaceResponse.Spaces = []string{}
 	for _, id := range ids {
-		listSpaceResponse.Spaces = append(listSpaceResponse.Spaces, id.Name)
+		if isUserInSpace(id.Name, listSpaceRequest.UserName, metadClient) {
+			listSpaceResponse.Spaces = append(listSpaceResponse.Spaces, id.Name)
+		}
 	}
 
 	if listSpaceResponse.Spaces == nil && len(listSpaceResponse.Spaces) == 0 {
@@ -1492,4 +1494,12 @@ func getSpaceID(spaceName string, metadClient *nebula_metad.MetaServiceClient) (
 	spaceID := getSpaceResp.Item.SpaceID
 	fmt.Println("SpaceID is ", getSpaceResp.Item.SpaceID)
 	return spaceID, nil
+}
+
+func isUserInSpace(spaceName string, userName string, metadClient *nebula_metad.MetaServiceClient) bool {
+	_, err := GetUserRoles(userName, spaceName, metadClient)
+	if err != nil {
+		return false
+	}
+	return true
 }
