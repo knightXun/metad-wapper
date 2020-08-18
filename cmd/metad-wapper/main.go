@@ -93,6 +93,7 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 
 func main() {
 	http.HandleFunc("/list/spaces", ListSpaceHandler)
+	http.HandleFunc("/list/users", ListUsersHandler)
 	http.HandleFunc("/create/spaces", CreateSpaceHandler)
 	http.HandleFunc("/create/users", CreateUserHandler)
 	http.HandleFunc("/clusterCost", ClusterCosts)
@@ -118,6 +119,15 @@ type ListSpaceRequest struct {
 type ListSpaceResponse struct {
 	InstanceID string
 	Spaces     []string
+	Code       int
+}
+
+type ListUsersRequest struct {
+	InstanceID string
+}
+
+type ListUsersResponse struct {
+	Users      []string
 	Code       int
 }
 
@@ -605,6 +615,83 @@ func ListSpaceHandler(w http.ResponseWriter, r *http.Request) {
 	listSpaceResponse.Code = 0
 
 	respBody, _ := json.Marshal(listSpaceResponse)
+
+	w.Write(respBody)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func ListUsersHandler(w http.ResponseWriter, r *http.Request) {
+	listUsersRequest := ListUsersRequest{}
+	listUsersResponse := ListUsersResponse{}
+
+	bodyData, err := ioutil.ReadAll(r.Body)
+
+	if err != nil {
+		listUsersResponse.Code = errorcode.ErrInvalidRequestBody
+		body, _ := json.Marshal(listUsersResponse)
+		w.Write(body)
+
+		fmt.Println("Invalid SpaceRequest Body")
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	json.Unmarshal(bodyData, &listUsersRequest)
+
+	metadClient, err := makeMetadClient(listUsersRequest.InstanceID)
+
+	defer func() {
+		if metadClient != nil {
+			metadClient.Transport.Close()
+		}
+	}()
+
+	if err != nil {
+		fmt.Println("Create MetadClient for error", listUsersRequest.InstanceID, err)
+		listUsersResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUsersResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	listUsersResp, err := metadClient.ListUsers(&nebula_metad.ListUsersReq{})
+
+	if err != nil {
+		fmt.Println("List Spaces for error: ", listUsersRequest.InstanceID, err)
+		listUsersResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUsersResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if listUsersResp.Code != nebula_metad.ErrorCode_SUCCEEDED {
+		fmt.Println("List Spaces for error code: ", listUsersRequest.InstanceID, listUsersResp.Code)
+		listUsersResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUsersResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if listUsersResp.Users == nil {
+		fmt.Println("No Spaces")
+		listUsersResponse.Code = errorcode.ErrInternalError
+		body, _ := json.Marshal(listUsersResponse)
+		w.Write(body)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	fmt.Println("Parse SpaceResponse")
+
+	listUsersResponse.Users = []string{}
+	for user, _ := range listUsersResp.Users {
+		listUsersResponse.Users = append(listUsersResponse.Users, user)
+	}
+
+	respBody, _ := json.Marshal(listUsersResponse)
 
 	w.Write(respBody)
 
