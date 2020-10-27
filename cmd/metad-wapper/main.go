@@ -93,17 +93,17 @@ func makeMetadClient(ns string) (*nebula_metad.MetaServiceClient, error) {
 }
 
 func main() {
-	http.HandleFunc("/list/spaces", ListSpaceHandler)
-	http.HandleFunc("/list/users", ListUsersHandler)
-	http.HandleFunc("/create/spaces", CreateSpaceHandler)
-	http.HandleFunc("/create/users", CreateUserHandler)
-	http.HandleFunc("/clusterCost", ClusterCosts)
-	http.HandleFunc("/changeGod", changeGod)
-	http.HandleFunc("/delete/users", revokeUsersHandler)
-	http.HandleFunc("/initialize", InitializeHandler)
-	http.HandleFunc("/list/spaces/users", ListSpaceUsersHandler)
-	http.HandleFunc("/list/rootspaces/users", ListRootSpaceUsersHandler)
-	http.HandleFunc("/instance/version", InstanceVersion)
+	http.HandleFunc("/metadwapper/list/spaces", ListSpaceHandler)
+	http.HandleFunc("/metadwapper/list/users", ListUsersHandler)
+	http.HandleFunc("/metadwapper/create/spaces", CreateSpaceHandler)
+	http.HandleFunc("/metadwapper/create/users", CreateUserHandler)
+	http.HandleFunc("/metadwapper/clusterCost", ClusterCosts)
+	http.HandleFunc("/metadwapper/changeGod", changeGod)
+	http.HandleFunc("/metadwapper/delete/users", revokeUsersHandler)
+	http.HandleFunc("/metadwapper/initialize", InitializeHandler)
+	http.HandleFunc("/metadwapper/list/spaces/users", ListSpaceUsersHandler)
+	http.HandleFunc("/metadwapper/list/rootspaces/users", ListRootSpaceUsersHandler)
+	http.HandleFunc("/metadwapper/instance/version", InstanceVersion)
 
 	err := http.ListenAndServe("0.0.0.0:8880", nil)
 

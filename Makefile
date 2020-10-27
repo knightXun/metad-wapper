@@ -84,8 +84,8 @@ metad-wapper-build:
 
 metad-wapper-container: metad-wapper-build
 	mv metad-wapper  deploy/metad-wapper/docker/
-	docker build -t knightxun/metad-wapper:v2 -f  deploy/metad-wapper/docker/Dockerfile  deploy/metad-wapper/docker/
+	docker build -t knightxun/metad-wapper:v3 -f  deploy/metad-wapper/docker/Dockerfile  deploy/metad-wapper/docker/
 	rm deploy/metad-wapper/docker/metad-wapper
 
 metad-wapper-push: metad-wapper-container
-	docker push knightxun/metad-wapper:v2
+	docker push knightxun/metad-wapper:v3
